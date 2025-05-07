@@ -9,36 +9,7 @@ const Profile = require('../src/schemas/schemaUserProfile')
 const ReadingList = require('../src/schemas/schemaReadingLists')
 const PdfParse = require('pdf-parse')
 
-const accountAddress = process.env.TRANS_MATERIAL_CONTRACT_ADDRESS
-const abi = require('../artifacts/Contracts/contracts/MaterialTransactions.sol/MaterialTransactions.json')
-const { ethers } = require('ethers')
-require('dotenv').config()
 
-const privateKey = process.env.PRIVATE_KEY
-const provider = new ethers.providers.JsonRpcProvider(
-  process.env.ALCHEMY_SEPOLIA_URL
-)
-const wallet = new ethers.Wallet(privateKey, provider)
-const contract = new ethers.Contract(accountAddress, abi.abi, wallet)
-
-function validateAccess(userRole, materialAccessibility) {
-  if (Array.isArray(materialAccessibility)) {
-    return materialAccessibility.includes(userRole)
-  }
-
-  if (userRole === 'Student' && materialAccessibility?.Student) {
-    return true
-  }
-
-  if (userRole === 'Faculty' && materialAccessibility?.Faculty) {
-    return true
-  }
-
-  if (materialAccessibility?.Student && materialAccessibility?.Faculty) {
-    return true
-  }
-  return false
-}
 
 router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
   try {
