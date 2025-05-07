@@ -25,3 +25,19 @@ Use Axios for making HTTP requests in a your front end. Before using Axios in yo
 ----------------------------------------------------------------------------------------------
 The server.js exposes multiple RESTful API endpoints to handle authentication, collaboration requests, material transactions, user profiling, engagements, rankings, and more.
 
+-----------------------------------------------------------------------------------------------
+Core libraries:
+- express
+- mongoose
+- dotenv
+- cors
+- multer
+- sharp
+- zlib
+- crypto
+- pdf-parse
+- axios
+
+Installation:
+ git clone https://github.com/Dar391/kahibawhub_APIs.git
+cd kahibawhub_APIs
