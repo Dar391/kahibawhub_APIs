@@ -18,12 +18,7 @@ const abi = require('../artifacts/Contracts/contracts/MaterialRegistry.sol/Mater
 const { ethers } = require('ethers')
 require('dotenv').config()
 
-const privateKey = process.env.PRIVATE_KEY
-const provider = new ethers.providers.JsonRpcProvider(
-  process.env.INFURA_SEPOLIA_RPC
-)
-const wallet = new ethers.Wallet(privateKey, provider)
-const contract = new ethers.Contract(materialContractAddress, abi.abi, wallet)
+
 
 const upload = multer({ storage: multer.memoryStorage() })
 
@@ -149,23 +144,6 @@ router.post(
       const savedMaterial = await newMaterial.save()
       const materialId = await savedMaterial._id.toString()
 
-      //contract
-      let tx
-      try {
-        tx = await contract.addMaterial(materialId, hashedData)
-        const receipt = await tx.wait()
-        if (receipt.status === 1) {
-          console.log('Material added to blockchain successfully!')
-          console.log('Hash:', tx.hash)
-        } else {
-          console.error('Failed to add material on the blockchain')
-        }
-      } catch (contractError) {
-        console.error('Smart contract error:', contractError)
-        return res
-          .status(500)
-          .json({ error: 'Material saved, but failed to write to blockchain.' })
-      }
 
       if (collabRequestContributors.length > 0) {
         const newCollabRequest = new collaborationsRequestSchema({
@@ -202,7 +180,7 @@ router.post(
       res.status(201).json({
         message: 'Material added successfully!',
         material: savedMaterial,
-        txHash: tx.hash,
+       
         materialID: materialId,
       })
     } catch (error) {
