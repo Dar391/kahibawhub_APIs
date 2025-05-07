@@ -1,0 +1,235 @@
+const express = require('express')
+const router = express.Router()
+const mongoose = require('mongoose')
+const zlib = require('zlib')
+const Materials = require('../src/schemas/schemaMaterials')
+const Comments = require('../src/schemas/schemaMaterialComments')
+const schemaUserRatings = require('../src/schemas/schemaMaterialRatings')
+const Profile = require('../src/schemas/schemaUserProfile')
+const ReadingList = require('../src/schemas/schemaReadingLists')
+const PdfParse = require('pdf-parse')
+
+router.get('/getMaterial/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const metadata = await Materials.findById(id)
+    const objectIdRegex = /^[0-9a-fA-F]{24}$/
+
+    const compressedFile = Buffer.from(metadata.materialFile)
+    const decompressedData = zlib.gunzipSync(compressedFile)
+    const pdfData = await PdfParse(decompressedData)
+
+    const materialData = {
+      ...metadata._doc,
+      materialImage: metadata.materialImage
+        ? `data:image/png;base64,${metadata.materialImage.toString('base64')}`
+        : null,
+      materialFile: decompressedData
+        ? `data:application/pdf;base64,${decompressedData.toString('base64')}`
+        : null,
+      dateUploaded: new Date(metadata.dateUploaded).toLocaleDateString(
+        'en-US',
+        {
+          month: 'short',
+          day: '2-digit',
+          year: 'numeric',
+        }
+      ),
+      totalWords: pdfData.text.split(/\s+/).length,
+      totalPages: pdfData.numpages,
+    }
+
+    const authorStrings = [
+      ...(typeof materialData?.primaryAuthor === 'string' &&
+      !objectIdRegex.test(materialData.primaryAuthor)
+        ? [materialData.primaryAuthor]
+        : []),
+      ...(materialData?.contributors || []).filter(
+        (contributor) =>
+          typeof contributor === 'string' && !objectIdRegex.test(contributor)
+      ),
+    ]
+
+    const primary =
+      materialData?.primaryAuthor?._id || materialData?.primaryAuthor
+
+    const contributors = (materialData?.contributors || [])
+      .map((contributor) => contributor?._id || contributor)
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map(String)
+
+    const allUsers = await Profile.find(
+      {
+        userId: { $in: [primary, ...contributors] },
+      },
+      'firstName lastName userImage primaryInstitution userId'
+    )
+
+    const primaryProfile = allUsers.find(
+      (user) => user.userId.toString() === primary.toString()
+    )
+    const contriProfile = allUsers.filter(
+      (user) => user.userId.toString() !== primary.toString()
+    )
+
+    const formatAuthor = (author) => ({
+      name: `${author.firstName} ${author.lastName}`,
+      image: author.userImage
+        ? `data:image/png;base64,${author.userImage.toString('base64')}`
+        : null,
+      primaryInstitution: author.primaryInstitution || 'Not specified',
+    })
+
+    const combinedAuthors = [
+      ...(primaryProfile ? [formatAuthor(primaryProfile)] : []),
+      ...contriProfile.map(formatAuthor),
+      ...authorStrings.map((name) => ({
+        name,
+        image: null,
+        primaryInstitution: 'Not registered',
+      })),
+    ]
+
+    console.log('Combined authors:', combinedAuthors)
+
+    const similar = await Materials.find(
+      {
+        disciplines: { $in: materialData.disciplines },
+        _id: { $ne: materialData._id },
+      },
+      '_id materialTitle'
+    )
+
+    res.json({ materialData, combinedAuthors, similar })
+  } catch (error) {
+    console.error('Error fetching user:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+router.get('/getMaterialratings/:materialId', async (req, res) => {
+  try {
+    const { materialId } = req.params
+
+    // Fetch ratings where materialId matches
+    const ratings = await schemaUserRatings
+      .find({ materialId })
+      .populate('userId', 'username')
+      .sort({ ratedDate: -1 })
+
+    // Return null if no ratings are found
+    if (!ratings.length) {
+      return res.status(200).json(null)
+    }
+
+    res.status(200).json(ratings)
+  } catch (error) {
+    console.error('Error fetching ratings:', error)
+    res.status(500).json({ error: 'Error retrieving ratings' })
+  }
+})
+
+router.get(
+  '/getUserRatingPerMaterial/:materialId/:userId',
+  async (req, res) => {
+    const { materialId, userId } = req.params
+
+    try {
+      const userRating = await schemaUserRatings.findOne({ materialId, userId })
+
+      if (!userRating) {
+        return res.status(200).json({ ratingValue: null, ratedDate: null })
+      }
+
+      res.status(200).json({
+        ratingValue: userRating.ratingValue,
+        ratedDate: userRating.ratedDate,
+      })
+    } catch (error) {
+      res.status(500).json({ error: 'Error fetching user rating!' })
+      console.error('Error fetching user rating:', error)
+    }
+  }
+)
+
+router.get('/getComments/:id', async (req, res) => {
+  const { id } = req.params
+  try {
+    const comments = await Comments.find({ materialId: id })
+      .populate('userId', 'commentDate') // Populate user details
+      .sort({ createdAt: -1 })
+
+    const commentData = await Promise.all(
+      comments.map(async (comment) => {
+        const userProfile = await Profile.findOne({ userId: comment.userId })
+        return {
+          ...comment._doc,
+          userName: userProfile
+            ? `${userProfile.firstName} ${userProfile.lastName}`
+            : 'Unknown User',
+          userImage: userProfile?.userImage
+            ? `data:image/png;base64,${userProfile.userImage.toString(
+                'base64'
+              )}`
+            : null,
+          userType: userProfile?.userType || 'User',
+        }
+      })
+    )
+
+    res.json({ commentData })
+  } catch (error) {
+    console.error('Error fetching comments:', error)
+  }
+})
+
+router.post('/incrementTotalRead/:materialID', async (req, res) => {
+  const { materialID } = req.params
+
+  try {
+    const material = await Materials.findOne({ _id: materialID })
+
+    if (!material) {
+      return res.status(404).json({ message: 'Material not found' })
+    }
+
+    material.totalReads = (material.totalReads || 0) + 1
+    await material.save()
+
+    res.status(200).json({
+      message: 'Total read incremented',
+      totalRead: material.totalReads,
+    })
+  } catch (error) {
+    console.error('Error incrementing totalRead:', error)
+    res.status(500).json({ message: 'Internal server error' })
+  }
+})
+
+router.post('/addReadingList/:materialId/:userId', async (req, res) => {
+  const { materialId, userId } = req.params
+
+  try {
+    const existingEntry = await ReadingList.findOne({ materialId, userId })
+    if (existingEntry) {
+      return res
+        .status(400)
+        .json({ message: 'Material already in reading list' })
+    }
+
+    const newEntry = new ReadingList({
+      userId,
+      materialId,
+    })
+    await newEntry.save()
+
+    res
+      .status(201)
+      .json({ message: 'Material added to reading list', data: newEntry })
+  } catch (error) {
+    console.error('Error adding to readinglist:', error)
+    res.status(500).json({ message: 'Internal server error' })
+  }
+})
+module.exports = router
