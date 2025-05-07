@@ -56,65 +56,8 @@ router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
     if (!metadata)
       return res.status(404).json({ message: 'Material not found' })
 
-    console.log('Initiating state channel...')
-    console.log('Material Accessibility:', materialAccessibility)
-    console.log('User Role:', userRole.userType)
-    const userAccess = validateAccess(userRole.userType, materialAccessibility)
-    console.log('User access:', userAccess)
-
-    console.log('Wallet:', wallet)
-    console.log('Account Address:', accountAddress)
-    const channelId = await openStateChannel(
-      wallet,
-      accountAddress,
-      userRole.userType
-    )
-    console.log('State channel opened:', channelId)
-    if (userAccess) {
-      await updateStateChannel(wallet, channelId, {
-        materialId,
-        userRole: userRole.userType,
-        userAccess: true,
-      })
-    } else {
-      await updateStateChannel(wallet, channelId, {
-        materialId,
-        userRole: userRole.userType,
-        userAccess: false,
-      })
-    }
-
-    console.log('Finalizing state channel...')
-    const finalState = { materialId, userAccess: userAccess }
-    await closeStateChannel(wallet, channelId, finalState)
-
-    console.log('Waiting Channel to closed...')
-
-    let fileHashFromBlockchain = null
-    try {
-      fileHashFromBlockchain = await contract.finalizeAccessDecision(
-        materialId,
-        userAccess
-      )
-      console.log('File Hash from Blockchain:', fileHashFromBlockchain)
-      console.log('Transaction Hash:', fileHashFromBlockchain.hash)
-      const receipt = await fileHashFromBlockchain.wait()
-      console.log('Transaction mined with status:', receipt.status)
-
-      if (!fileHashFromBlockchain || fileHashFromBlockchain === '') {
-        // If no file hash was retrieved, return an error response
-        return res
-          .status(400)
-          .json({ message: 'File hash could not be retrieved from blockchain' })
-      }
-    } catch (error) {
-      console.error('Error fetching file hash from blockchain:', error)
-    }
-
-    if (fileHashFromBlockchain !== metadata.fileHash) {
-      return res.status(400).json({ message: 'File integrity check failed' })
-    }
-
+  
+    
     console.log('File Hash DB:', metadata.fileHash)
     const compressedFile = Buffer.from(metadata.materialFile)
     const decompressedData = zlib.gunzipSync(compressedFile)
