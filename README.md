@@ -21,8 +21,7 @@ Set up environment variables:
 Create a .env file in the root directory and add the necessary environment variables for your application.
 
 --------------------------------------------------------------------------------------------
-Use Axios for making HTTP requests in a your front end. Before using Axios in your React component, you need to import it. You define an async function to handle the HTTP request. The async keyword allows the use of the await keyword inside the function to wait for asynchronous operations to complete.
-----------------------------------------------------------------------------------------------
+
 The server.js exposes multiple RESTful API endpoints to handle authentication, collaboration requests, material transactions, user profiling, engagements, rankings, and more.
 
 -----------------------------------------------------------------------------------------------
