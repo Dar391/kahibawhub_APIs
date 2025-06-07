@@ -1,11 +1,14 @@
 const express = require('express')
 const router = express.Router()
+const mongoose = require('mongoose')
 
 const collaborationsSchema = require('../src/schemas/schemaCollaborations')
 const collaborationsRequestSchema = require('../src/schemas/schemaCollaborationRequests')
 const materials = require('../src/schemas/schemaMaterials')
 const pendingCollabRequest = require('../src/schemas/schemaPendingCollabRequests')
 const collabRequest = require('../src/schemas/schemaCollaborationRequests')
+const Registered = require('../src/schemas/schemaRegisteredUsers')
+const Materials = require('../src/schemas/schemaMaterials')
 
 //moved to adding materials, will be deleted
 router.post('/collaborationRequests', async (req, res) => {
@@ -172,12 +175,134 @@ router.post('/rejectCollaboration/:requestId/:authorId', async (req, res) => {
   }
 })
 
-//to be implemented:
-//get user requests for collaboration with other authors (requestor) - display
-//get collaboration requests for approval/reject (as requestee) - display
-//delete requestor's request for collaboration
-//update requestor's request for collaboration
+router.get(
+  '/getPendingCollabRequestsFromOtherAuthors/:userId',
+  async (req, res) => {
+    try {
+      const { userId } = req.params
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID.' })
+      }
 
-//Note: adding request is in materialTransactionsAPI. Logic: new material added = new request (if there are contributors)
+      const requests = await pendingCollabRequest.find({
+        requestedTo: userId,
+        userAction: 'pending',
+      })
+
+      const collabRequestIds = requests.map((r) => r.collabRequest_ID)
+
+      const collabRequests = await collabRequest
+        .find({
+          _id: { $in: collabRequestIds },
+        })
+        .select('_id materialId requestedBy')
+
+      const userIds = [
+        ...new Set([
+          ...requests.map((r) => r.requestedTo.toString()),
+          ...collabRequests.map((cr) => cr.requestedBy.toString()),
+        ]),
+      ]
+
+      const materialIds = [
+        ...new Set(collabRequests.map((cr) => cr.materialId.toString())),
+      ]
+
+      const users = await Registered.find({
+        _id: { $in: userIds },
+      }).select('_id firstName lastName')
+
+      const getFullName = (userId) => {
+        const user = users.find((u) => u._id.toString() === userId.toString())
+        return user ? `${user.firstName} ${user.lastName}` : null
+      }
+
+      const materials = await Materials.find({
+        _id: { $in: materialIds },
+      }).select('_id materialTitle')
+
+      const getMaterialTitle = (materialId) => {
+        const mat = materials.find(
+          (m) => m._id.toString() === materialId?.toString()
+        )
+        return mat ? mat.materialTitle : null
+      }
+
+      const results = requests.map((req) => {
+        const matchingCollab = collabRequests.find(
+          (cr) => cr._id.toString() === req.collabRequest_ID.toString()
+        )
+        return {
+          // pendingRequestId: req._id,
+          collabRequestId: req.collabRequest_ID,
+          // requestedTo: req.requestedTo,
+          //requestedToName: getFullName(req.requestedTo) || null,
+          userAction: req.userAction,
+          materialId: matchingCollab?.materialId || null,
+          materialTitle: getMaterialTitle(matchingCollab?.materialId),
+          requestedBy: matchingCollab?.requestedBy || null,
+          requestedByName: getFullName(matchingCollab?.requestedBy) || null,
+        }
+      })
+
+      res.status(200).json({ data: results })
+    } catch (error) {
+      console.error('Error fetching pending requests:', error)
+      res.status(500).json({
+        message:
+          'An error occured while retrieving pending requests. Try again later.',
+      })
+    }
+  }
+)
+
+router.get(
+  '/getMyCollaborationRequestToOtherAuthors/:userId',
+  async (req, res) => {
+    try {
+      const { userId } = req.params
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID.' })
+      }
+
+      const myRequests = await collabRequest.find({
+        requestedBy: userId,
+      })
+
+      const materialIds = [
+        ...new Set(myRequests.map((cr) => cr.materialId.toString())),
+      ]
+
+      const materials = await Materials.find({
+        _id: { $in: materialIds },
+      }).select('_id materialTitle')
+
+      const getMaterialTitle = (materialId) => {
+        const mat = materials.find(
+          (m) => m._id.toString() === materialId?.toString()
+        )
+        return mat ? mat.materialTitle : null
+      }
+
+      const result = myRequests.map((request) => {
+        return {
+          collabRequestId: request._id,
+          materialId: request.materialId,
+          materialTitle: getMaterialTitle(request.materialId),
+          requestedBy: request.requestedBy,
+          requestedTo: request.requestedTo,
+        }
+      })
+
+      res.status(200).json({ data: result })
+    } catch (error) {
+      console.error('Error fetching pending requests:', error)
+      res.status(500).json({
+        message:
+          'An error occured while retrieving pending requests. Try again later.',
+      })
+    }
+  }
+)
 
 module.exports = router
