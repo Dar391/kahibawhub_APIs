@@ -74,7 +74,8 @@ router.post('/newRegistration', async (req, res) => {
     })
   } catch (error) {
     console.error('Error saving user:', error)
-    res.status(500).json({ error: 'Could not save the user' })
+    res.status(500).json({ message:
+        'An error has occured during registration. Please try again later.', })
   }
 })
 
@@ -92,10 +93,10 @@ router.get('/auth/confirm', async (req, res) => {
       { token, tokenId }
     )
 
-    res.send('✅ Email successfully confirmed! You can now log in.')
+    res.send('Email successfully confirmed! You can now log in.')
   } catch (error) {
     console.error('Confirmation error:', error.response?.data || error.message)
-    res.status(500).json({ error: '❌ Email confirmation failed' })
+    res.status(500).json({ error: 'Email confirmation failed' })
   }
 })
 
@@ -108,7 +109,7 @@ router.post('/userLogin', async (req, res) => {
     const user = await RegisteredUsers.findOne({ email })
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' })
+      return res.status(404).json({ error: 'User not found.Please register first.' })
     }
 
     const hashedInputPassword = hashpassword(password)
@@ -116,29 +117,21 @@ router.post('/userLogin', async (req, res) => {
       return res.status(401).json({ error: 'Incorrect password' })
     }
 
-    const token = jwt.sign({ id: user._id }, 'your_secret_key', {
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
       expiresIn: '1hr',
     })
 
-    const walletAddress = user.walletAddress
-    const privateKey = user.privateKey
-
-    console.log('wallet address:', walletAddress)
-    console.log('private key :', privateKey)
-
-    const channelId = await openStateChannel(privateKey, walletAddress)
-    console.log('State channel opened with channelId:', channelId)
-    //req.session.channelId = channelId
+  
 
     return res.status(200).json({
       message: 'Login successful',
       token,
       userId: user._id,
-      stateChannelInitialized: true,
+     
     })
   } catch (error) {
     console.error('Login error:', error)
-    res.status(500).json({ error: 'Internal server error' })
+    res.status(500).json({ error: 'An error has occured during log in. Please try again later.' })
   }
 })
 
