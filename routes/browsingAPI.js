@@ -66,6 +66,8 @@ router.get('/getFilterOption', async (req, res) => {
       )
     }
 
+    
+
     const materialTypes = [
       ...new Set(filterOptions.map((item) => item.materialType)),
     ]
@@ -184,6 +186,15 @@ router.get('/getAllMaterials', async (req, res) => {
       totalMaterials = totalCount
     }
 
+      if (type === 'collab') {
+      collabList = await Materials.find({
+        contributors: { $in: [userId] },
+      })
+      const totalCount = collabList.length
+      allMaterials = collabList
+      totalMaterials = totalCount
+    }
+
     const authorIds = allMaterials.map((material) => material.primaryAuthor)
     const authors = await RegisteredUsers.find(
       { _id: { $in: authorIds } },
@@ -219,8 +230,8 @@ router.get('/getAllMaterials', async (req, res) => {
 
     res.json({ formattedMaterials, totalMaterials })
   } catch (error) {
-    console.error('Error fetching image:', error)
-    res.status(500).send('Error fetching image.')
+    console.error('Error occured:', error)
+    res.status(500).send('An error has occurred while fetching materials. Please try again later.')
   }
 })
 
@@ -281,7 +292,7 @@ router.get('/searchQuery', async (req, res) => {
     res.json(formattedMaterials)
   } catch (error) {
     console.error('Error fetching search results:', error)
-    res.status(500).json({ error: 'Error fetching search results' })
+    res.status(500).json({ error: 'Error fetching search results.Try again later.' })
   }
 })
 
