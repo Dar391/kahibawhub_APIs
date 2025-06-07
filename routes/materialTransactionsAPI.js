@@ -79,32 +79,34 @@ router.delete('/deleteMaterial/:materialId', async (req, res) => {
     }
     await Comments.deleteMany({ materialId: materialId })
     await Ratings.deleteMany({ materialId: materialId })
-    await collaborationsRequestSchema.deleteMany({ materialId: materialId })
+
     await MaterialUpdateRequest.deleteMany({ materialId: materialId })
     await ReadingLists.deleteMany({ materialId: materialId })
 
-    //contract
-    let tx
-    try {
-      tx = await contract.deleteMaterial(materialId)
-      const receipt = await tx.wait()
-      if (receipt.status === 1) {
-        console.log('Material deleted from blockchain successfully!')
-      } else {
-        console.error('Failed to delete material on the blockchain')
-      }
-    } catch (contractError) {
-      console.error('Smart contract error(delete):', contractError)
-      return res.status(500).json({
-        error: 'Material deleted, but failed to delete in blockchain.',
+    const requests = await collaborationsRequestSchema
+      .find({
+        materialId: materialId,
       })
+      .select('_id')
+     
+
+    if (requests.length > 0) {
+      const pendingRequestIds = requests.map((request) => request._id)
+      await pendingCollabRequest
+        .deleteMany({
+          collabRequest_ID: { $in: pendingRequestIds },
+        })
+        .session(session)
+      // Step 5: Delete collaboration requests
+      await collaborationsRequestSchema
+        .deleteMany({ materialId: materialId })
+        
     }
 
-    res.status(200).json({ message: 'Material deleted successfully' })
+    res.status(200).json({ message: 'Material deleted successfully.' })
   } catch (error) {
     console.error('Error deleting material:', error)
-    res.status(500).json({ error: 'Error deleting material' })
-  }
+    res.status(500).json({ error: 'An Error An error has occured while deleting material. Try again later.
 })
 
 //call when adding material to readinglist
@@ -173,7 +175,131 @@ router.post(
   }
 )
 
-//call when requesting an update for materials
+    router.get('/checkingUpdateRequestee/:userId/:materialId', async (req, res) => {
+  const { userId, materialId } = req.params
+
+  try {
+    // Fetch material
+    const material = await Materials.findById(materialId)
+    if (!material) {
+      return res.status(404).json({ error: 'Material not found.' })
+    }
+
+    // Compare primary author ID
+    const isPrimaryAuthor = material.primaryAuthor.toString() === userId
+
+    return res.status(200).json({
+      isPrimaryAuthor,
+      message: isPrimaryAuthor
+        ? 'User is the primary author.'
+        : 'User is not the primary author.',
+    })
+  } catch (error) {
+    console.error('Error checking author status:', error)
+    return res.status(500).json({ error: 'Server error occurred.' })
+  }
+})
+
+
+router.put(
+  '/updateMaterial/:materialId',
+  upload.fields([
+    { name: 'materialFile', maxCount: 1 },
+    { name: 'materialImage', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const { materialId } = req.params;
+
+    let existingMaterial;
+    try {
+      existingMaterial = await Materials.findById(materialId);
+      if (!existingMaterial) {
+        return res.status(404).json({ error: 'Material not found.' });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid material ID.' });
+    }
+
+    const file = req.files.materialFile ? req.files.materialFile[0] : null;
+    const image =
+      req.files.materialImage && req.files.materialImage.length > 0
+        ? req.files.materialImage[0].buffer
+        : null;
+
+    const {
+      materialTitle,
+      materialDescription,
+      contributors,
+      materialType,
+      targetAudience,
+      disciplines,
+      technicalType,
+      materialAccessibility,
+      authorPermission,
+      averageRatings,
+      totalComments,
+      totalReads,
+    } = req.body;
+
+    try {
+      let compressedData = existingMaterial.materialFile;
+      let hashedData = existingMaterial.fileHash;
+
+      // Handle file update
+      if (file) {
+        compressedData = zlib.gzipSync(file.buffer);
+        hashedData = hashingFunction(compressedData);
+      }
+
+      // Handle image
+      let imageBuffer = existingMaterial.materialImage;
+      if (image) {
+        imageBuffer = await sharp(image)
+          .resize({ width: 300, height: 300, fit: 'cover' })
+          .toBuffer();
+      }
+
+      let validContributors = [];
+      if (contributors && contributors.length > 0) {
+        for (const contributor of contributors) {
+          if (!mongoose.Types.ObjectId.isValid(contributor)) continue;
+          validContributors.push(contributor);
+        }
+      }
+
+      // Update material fields
+      existingMaterial.materialTitle = materialTitle;
+      existingMaterial.materialDescription = materialDescription;
+      existingMaterial.contributors = validContributors;
+      existingMaterial.materialType = materialType;
+      existingMaterial.targetAudience = targetAudience;
+      existingMaterial.disciplines = disciplines;
+      existingMaterial.technicalType = technicalType;
+      existingMaterial.materialAccessibility = materialAccessibility;
+      existingMaterial.authorPermission = authorPermission;
+      existingMaterial.averageRatings = averageRatings;
+      existingMaterial.totalComments = totalComments;
+      existingMaterial.totalReads = totalReads;
+      existingMaterial.materialFile = compressedData;
+      existingMaterial.fileHash = hashedData;
+      existingMaterial.materialImage = imageBuffer;
+
+      const updatedMaterial = await existingMaterial.save();
+
+      res.status(200).json({
+        message: 'Material updated successfully.',
+        material: updatedMaterial,
+      });
+    } catch (error) {
+      console.error('Update failed:', error);
+      res.status(500).json({ error: 'Failed to update material.' });
+    }
+  }
+);
+
+
+    
+//call if requestee is contributor
 router.post(
   '/sendMaterialUpdateRequest/:userId/:materialId',
   async (req, res) => {
@@ -282,15 +408,7 @@ router.post(
   }
 )
 
-//call when modifying update request for materials
-router.put(
-  '/modifyUpdatedMaterialData/:userId/:materialId',
-  async (req, res) => {
-    const { userId, materialId } = req.params
-    try {
-    } catch (error) {}
-  }
-)
+
 
 //call when adding author, this will get registered users name and id
 router.get('/getSuggestedUsers', async (req, res) => {
