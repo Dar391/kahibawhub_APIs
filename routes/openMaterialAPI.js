@@ -8,28 +8,117 @@ const schemaUserRatings = require('../src/schemas/schemaMaterialRatings')
 const Profile = require('../src/schemas/schemaUserProfile')
 const ReadingList = require('../src/schemas/schemaReadingLists')
 const PdfParse = require('pdf-parse')
+const { ethers } = require('ethers')
 
+const provider = new ethers.JsonRpcProvider(process.env.INFURA_SEPOLIA_RPC)
+const systemSigner = new ethers.Wallet(process.env.PRIVATE_KEY, provider)
+const contractAddress = process.env.MATERIAL_TRANSACTION_CONTRACT_ADDRESS
+const contractABI = require('../artifacts/Contracts/contracts/MaterialTransactions.sol/MaterialTransactions.json')
+const contract = new ethers.Contract(
+  contractAddress,
+  contractABI.abi,
+  systemSigner
+)
 
+function validateAccess(userRole, materialAccessibility) {
+  if (!materialAccessibility || !Array.isArray(materialAccessibility)) {
+    return true
+  }
+
+  return materialAccessibility.includes(userRole)
+}
+
+router.get('/checkAccessibility/:materialId/:userId', async (req, res) => {
+  try {
+    const { materialId, userId } = req.params
+    const objectIdRegex = /^[0-9a-fA-F]{24}$/
+
+    const metadata = await Materials.findById(
+      materialId,
+      'fileHash primaryAuthor materialAccessibility contributors'
+    )
+    if (!metadata)
+      return res.status(404).json({
+        message:
+          'Material not found. Kindly submit a report regarding this issue.',
+      })
+    // Verify file hash on-chain matches DB
+    const contractData = await contract.getMaterial(materialId)
+    if (!contractData || contractData !== metadata.fileHash) {
+      return res.status(400).json({
+        message:
+          'File integrity check failed! This may indicate that the material file has been modified or the stored data is outdated. Please contact support for assistance.',
+      })
+    }
+
+    if (metadata.primaryAuthor?.toString() == userId) {
+      return res.status(200).json({
+        message: 'You are the author of this material. You have access.',
+        fileHash: contractData,
+      })
+    }
+
+    if (metadata.contributors && metadata.contributors.includes(userId)) {
+      return res.status(200).json({
+        message: 'You are a contributor to this material. You have access.',
+        fileHash: contractData,
+      })
+    }
+
+    const userRoleDoc = await Profile.findOne({ userId: userId }, 'userType')
+    //user has to set his/her profile before accessing a material. This is a checker, that passes empty role to front end. If empty then front end will pop notification
+    if (!userRoleDoc || !userRoleDoc.userType)
+      return res.json({
+        message:
+          'User type not set. Please complete your profile setup to access materials.',
+      })
+
+    const userRole = userRoleDoc.userType
+
+    // Check if the user has access to the material
+    const materialAccessibility = metadata?.materialAccessibility
+    const userAccess = validateAccess(userRole, materialAccessibility)
+
+    if (!userAccess) {
+      return res.status(403).json({
+        message: 'You do not have access to this material.',
+      })
+    }
+
+    return res.status(200).json({
+      message: 'Accessibility check successful. You can view the material!',
+      fileHash: contractData,
+    })
+  } catch (error) {
+    console.error('Error during access check:', error)
+    return res.status(500).json({
+      message:
+        'Unable to load the material at the moment. Please try again shortly.',
+    })
+  }
+})
 
 router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
   try {
-    console.log('Fetching material details...')
     const { materialId, userId } = req.params
+    const fileHash = req.query.fileHash
     const objectIdRegex = /^[0-9a-fA-F]{24}$/
-    console.log('Material id:', materialId)
-    console.log('User id:', userId)
-    const userRole = await Profile.findOne({ userId: userId }, 'userType')
 
-    if (!userRole) return res.status(404).json({ message: 'User not found' })
-    // Fetch material metadata
     const metadata = await Materials.findById(materialId)
-    const materialAccessibility = metadata?.materialAccessibility
     if (!metadata)
-      return res.status(404).json({ message: 'Material not found' })
+      return res.status(404).json({
+        message:
+          'Material not found. Kindly submit a report regarding this issue.',
+      })
 
-  
-    
-    console.log('File Hash DB:', metadata.fileHash)
+    //checking credibility
+    if (!fileHash || fileHash !== metadata.fileHash) {
+      return res.status(400).json({
+        message:
+          'File integrity check failed! This may indicate that the material file has been modified or the stored data is outdated. Please contact support for assistance.',
+      })
+    }
+
     const compressedFile = Buffer.from(metadata.materialFile)
     const decompressedData = zlib.gunzipSync(compressedFile)
     const pdfData = await PdfParse(decompressedData)
@@ -82,6 +171,7 @@ router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
     const primaryProfile = allUsers.find(
       (user) => user.userId.toString() === primary.toString()
     )
+
     const contriProfile = allUsers.filter(
       (user) => user.userId.toString() !== primary.toString()
     )
@@ -124,6 +214,8 @@ router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
       ? await schemaUserRatings.findOne({ materialId, userId })
       : null
 
+    console.log('User rating fetched successfully')
+
     // Fetch comments
     const comments = await Comments.find({ materialId: materialId }).sort({
       createdAt: -1,
@@ -146,7 +238,7 @@ router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
       })
     )
 
-    res.json({
+    res.status(200).json({
       materialData,
       combinedAuthors,
       similar,
@@ -161,7 +253,10 @@ router.get('/getMaterialDetails/:materialId/:userId?', async (req, res) => {
     })
   } catch (error) {
     console.error('Error fetching material details:', error)
-    res.status(500).json({ message: 'Server error' })
+    return res.status(500).json({
+      message:
+        'Unable to load the material at the moment. Please try again shortly.',
+    })
   }
 })
 
@@ -172,19 +267,20 @@ router.post('/incrementTotalRead/:materialID', async (req, res) => {
     const material = await Materials.findOne({ _id: materialID })
 
     if (!material) {
-      return res.status(404).json({ message: 'Material not found' })
+      return res.status(404).json({
+        message:
+          "The material you're trying to access doesn't exist or has been removed.",
+      })
     }
 
     material.totalReads = (material.totalReads || 0) + 1
     await material.save()
-
-    res.status(200).json({
-      message: 'Total read incremented',
-      totalRead: material.totalReads,
-    })
   } catch (error) {
     console.error('Error incrementing totalRead:', error)
-    res.status(500).json({ message: 'Internal server error' })
+    res.status(500).json({
+      message:
+        'Unable to load the material at the moment. Please try again shortly.',
+    })
   }
 })
 
@@ -200,7 +296,7 @@ router.post('/addReadingList/:userId/:materialId', async (req, res) => {
     if (existingEntry) {
       return res
         .status(400)
-        .json({ message: 'Material already in reading list' })
+        .json({ message: 'Material already in reading list.' })
     }
 
     const newEntry = new ReadingList({
@@ -208,12 +304,13 @@ router.post('/addReadingList/:userId/:materialId', async (req, res) => {
       materialId: materialId,
     })
     await newEntry.save()
-    res
-      .status(201)
-      .json({ message: 'Material added to reading list', data: newEntry })
+    res.status(201).json({ message: 'Material added to reading list.' })
   } catch (error) {
     console.error('Error adding to readinglist:', error)
-    res.status(500).json({ message: 'Internal server error' })
+    res.status(500).json({
+      message:
+        'Unable to save the material at the moment. Please try again shortly.',
+    })
   }
 })
 module.exports = router
