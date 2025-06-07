@@ -46,9 +46,9 @@ router.post(
     if (!file) {
       return res
         .status(400)
-        .json({ error: 'Material file is missing or incorrectly uploaded.' })
+        .json({ error: 'Material file is missing or incorrectly uploaded. Please try again.' })
     }
-    console.log('API called') // This will help to check what is actually being uploaded.
+  
 
     const image =
       req.files.materialImage && req.files.materialImage.length > 0
@@ -110,7 +110,7 @@ router.post(
               .toBuffer()
           } catch (error) {
             console.error('Error processing random image:', error)
-            imageBuffer = null // Handle errors gracefully
+            imageBuffer = null
           }
         } else {
           imageBuffer = null
@@ -185,7 +185,7 @@ router.post(
       })
     } catch (error) {
       console.error('Error saving material:', error)
-      res.status(500).json({ error: 'Could not save the material' })
+      res.status(500).json({ error: 'Could not save the material. Please try again later.' })
     }
   }
 )
